@@ -1,0 +1,172 @@
+---
+title: "R - NN Energy Efficiency"
+output: html_notebook
+---
+
+## Using Neural Network to Predict the Energy Efficiency of Buildings
+
+### Packages we will use that are not currently installed.
+You may have more.  Put the install.package() here.
+```{r}
+#install.packages("neuralnet")
+install.packages("neuralnet")
+```
+
+We will use a dataset downloaded from UC Irvine's Machine Learning Datasets
+site.
+
+http://archive.ics.uci.edu/ml/datasets/Energy+efficiency
+
+### Read the downloaded dataset
+We will read in the dataset using the readxl package to read an Excel file
+
+```{r}
+library(readxl)
+wine <- read_xlsx("/Users/beatrizmorales/Downloads/winequality.xlsx")
+names(wine) <- c("color", "fixedAcidity", "volatileAcidity", "citricAcid", "residualSugar", "chlorides", "freeSulfurDioxide", "totalSulfurDioxide", "density", "pH", "sulphates", "alcohol", "quality")
+wine <- wine[complete.cases(wine),]  
+wine
+```
+
+orientation and glazAreaDist are actually factors; so, we need to convert them to factors and then create dummy variables for them.
+
+The dummyVars() function takes in a formula (like a regression formula using in lm(), for example) and a data frame. Next, it identifies the input features and performs dummy encoding on the variables that are factors to produce binary columns for k - 1 of the levels in that factor.
+
+### Create dummy variables and include in copy of energy dataset (energy_data)
+
+```{r}
+library(caret)
+wine$color <- factor(wine$color)
+dummies <- dummyVars(quality ~ ., data = wine)
+wine_data <- cbind(as.data.frame(predict(dummies, newdata = wine)), wine[,"quality", drop= FALSE])
+dim(wine_data)
+wine_data
+```
+
+
+### Split into an 80/20 split between training and testing datasets
+
+
+1. Use createDataPartition to create a vector containing the rows to include when randomly selecting 80% of the rows.
+For training data:
+2. save the randomly selected 80% of the data into energy.train - just the first 16 columns, all but the dependent variables
+3. save the dependent variables from the randomly selected 80% of the data into energy.train.outputs
+
+Repeat steps 2 & 3 except extract the remaining 20% for the energy.test & energy.test.outputs
+
+```{r}
+set.seed(1234)
+wine_sampling_vector <- createDataPartition(wine_data$quality, p = 0.70, list = FALSE)
+p <-ncol(wine_data) -1
+
+wine.train <- wine_data[wine_sampling_vector, 1:p, drop = FALSE]
+wine.train.outputs <- wine_data[wine_sampling_vector, p + 1, drop = FALSE]
+wine.train
+
+wine.test <- wine_data[-wine_sampling_vector, 1:p, drop = FALSE]
+wine.test.outputs <- wine_data[-wine_sampling_vector, p + 1, drop = FALSE]
+wine.test
+colnames(wine.train.outputs) <- "quality"
+colnames(wine.test.outputs) <- "quality"
+```
+
+When training a neural network, it is important to scale the variables.  This changes the data in each variable to be represented by its standard deviation from the mean=0.  This helps to avoid saturation, which occurs when the optimization procedure reaches a point where the gradient of the error function is very small in absolute value.
+
+This can occur when some of the variables have very large values or very small variable.  By scaling all variables, it keeps the optimization procedure of the neural network training from terminating prior to converging.
+
+To do this, we will use the caret package to pre-process the data (scale it).
+
+```{r}
+library(caret)
+wine.pp           <- preProcess(wine.train, method = c("range"))
+wine.train.pp     <- predict(wine.pp, wine.train)
+wine.test.pp      <- predict(wine.pp, wine.test)
+
+wine.train.out.pp <- preProcess(wine.train.outputs, method = c("range"))
+wine.train.outputs.pp <- predict(wine.train.out.pp, wine.train.outputs)
+wine.test.outputs.pp  <- predict(wine.train.out.pp, wine.test.outputs)
+colnames(wine.train.outputs.pp) <- "quality"
+colnames(wine.test.outputs.pp)  <- "quality"
+```
+
+
+## A. Use the neuralnet package to train the neural network for regression
+
+'neuralnet' trains a neural netowrk based on the information in its arguments.  The first argument is a formula similar to ones used with lm() and glm().  However, in this neural network, we have specified two output variables instead of one.
+
+We build the formula and store it in the variables, f.  The as.formula places writes the two output variables on the left side of the formula, separated by the tilde (~).  Next, the variables other than heatLoad and coolLoad are extracted from the variable n, which was created to contain a vector of the names of the variables in the data frame.  The variables names are separated by a plus sign (+).
+
+Next, we call neuralnet() to build the neural net and we specify that it contains 10 hidden nodes.  It is a single layer because we specified hiddent = 10, instead of assigning a vector containing the number of nodes in each layer.  For example, the parameter: hidden = c(4, 3, 2) would indicate we wanted to define 3 layers of nodes.  layer 1 containing 4 nodes, layer 2: 3 nodes, & layer 3: 2 nodes.  
+
+Whether we have a single layer or multiple layers of neurons in our network, each node contains an activation function.  The activation function is a mathematical function applied to the output of a neuron (node) to decide whether it should be 'activated' (or if it should pass information forward to the next layer).  It introduces non-linearity into the network.  It works as follows:
+
+Each neuron in the network receives input data (input variable values if it is the input layer or output from previous layer in a multi-layer network), a weight (which is learned as training data continues to process), and bias (a shift term - do not worry about that at this time).
+
+It uses a formula to calculate the weighted sum.  The weighted sum is then applied to the activation function.  There are many types of activation functions.  The activation function transforms teh raw input into a useful signal to be passed forward.
+
+One might ask, why not just use the weighted sum instead of having the weighted sum as input to the activation function.  Without the activation function, it becomes just a series of linear equations, which is no better than a linear model like multiple regression.  The activation function introduces non-linearity which allows the network to learn complex, non-linear relationships in the data (like recognizing faces, detecting patterns, translating languages, providing the 'next' word in a response to a prompt to 'write an essay')
+
+The activation function is used to decide how much signal to pass to the next layer.
+
+More on the complexities (and explanation) of neural networks later in the course.
+
+```{r}
+library(neuralnet)
+n <- names(wine.train.pp)
+f <- as.formula(paste("quality ~", paste(n, collapse = " + ")))
+f
+```
+
+## Evaluate the neural network performance for regression
+
+Use the compute() function to calculate the result of using the energy.test dataset as input to the model we built using the energy.train data.
+
+```{r}
+test.X <- wine.test.pp[, names(wine.train.pp), drop = FALSE]
+test.predictions <- compute(wine.model, test.X)
+head(test.predictions$net.result)
+
+```
+
+The outputs that are shown above are the result of scaled data.  To be meaningful and to use a metric like Mean Squared Error (MSE), we need to transform the outputs back into their original scale (units).  To do this, we need to use the constants represented by ranges of our outputs.
+```{r}
+wine.train.out.pp$ranges
+```
+
+Row [1,] contains the minimum values of the original data.  Row [2,] contains the maximum values.  Next, we will use these ranges to obtain our unscaled predicted outputs.
+```{r}
+reverse.range.scale <- function(v, ranges) {
+  return( (ranges[2] - ranges[1]) * v + ranges[1])
+}
+```
+
+Above is a function into which we can pass a vector or out outpuvariables and the ranges to return the unscaled data.  Below, we will use this function.
+```{r}
+output.ranges <- wine.train.out.pp$ranges
+
+test.predictions.unscaled <- sapply(1:2, function(x)
+  reverse.range.scale(test.predictions$net.result[,x], output.ranges[,x]))
+```
+
+### Compare the predicted values to the actual values in the test dataset using mean squared error (mse)
+
+```{r}
+mse <- function(y_p,y) {
+  return(mean((y - y_p) ^ 2))
+}
+
+mse(test.predictions.unscaled[,1],wine.test.outputs[,1])
+
+mse(test.predictions.unscaled[,2], wine.test.outputs[,2])
+```
+
+The output of calling to calculate the error on the ranges of unscaled data compared to the actual output values in the test dataset is very low.  This indicates that we have very good prediction accuracy.
+
+Additionally, we can use corrrelation, cor(), to measure the relationship between the unscaled output of the neural net and the original values of heatLoad and coolLoad in the test dataset.
+
+```{r}
+cor(test.predictions.unscaled[,1], wine.test.outputs[,1])
+cor(test.predictions.unscaled[,2], wine.test.outputs[,2])
+```
+
+The very high correlation indicates that the neural net output values that are almost perfectly correlated with the actual values.  This indicates a very good network.
