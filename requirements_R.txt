@@ -1,0 +1,6 @@
+R packages:
+readxl
+caret
+neuralnet
+
+install.packages(c("readxl","caret","neuralnet"))

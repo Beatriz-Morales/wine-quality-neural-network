@@ -1,0 +1,83 @@
+---
+title: "Wine Quality Neural Network"
+output: html_document
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(readxl)
+library(caret)
+library(neuralnet)
+
+wine <- read_xlsx("data/winequality.xlsx")
+names(wine) <- c(
+  "color","fixedAcidity","volatileAcidity","citricAcid","residualSugar",
+  "chlorides","freeSulfurDioxide","totalSulfurDioxide","density","pH",
+  "sulphates","alcohol","quality"
+)
+wine <- wine[complete.cases(wine), ]
+wine$color <- factor(wine$color)
+```
+
+## Dummy encoding
+```{r}
+dummies <- dummyVars(quality ~ ., data=wine, fullRank=TRUE)
+x <- as.data.frame(predict(dummies, newdata=wine))
+y <- data.frame(quality=wine$quality)
+```
+
+## Train/test split
+```{r}
+set.seed(1234)
+idx <- createDataPartition(y$quality, p=0.70, list=FALSE)
+x_train <- x[idx, , drop=FALSE]
+x_test  <- x[-idx, , drop=FALSE]
+y_train <- y[idx, , drop=FALSE]
+y_test  <- y[-idx, , drop=FALSE]
+```
+
+## Scale using training data only
+```{r}
+x_pp <- preProcess(x_train, method="range")
+x_train_s <- predict(x_pp, x_train)
+x_test_s  <- predict(x_pp, x_test)
+
+y_pp <- preProcess(y_train, method="range")
+y_train_s <- predict(y_pp, y_train)
+```
+
+## Train neural network
+```{r}
+train_nn <- cbind(x_train_s, quality=y_train_s$quality)
+formula_nn <- as.formula(
+  paste("quality ~", paste(names(x_train_s), collapse=" + "))
+)
+
+set.seed(1234)
+wine.model <- neuralnet(
+  formula_nn,
+  data=train_nn,
+  hidden=10,
+  linear.output=TRUE,
+  lifesign="minimal"
+)
+```
+
+## Held-out prediction
+```{r}
+pred_scaled <- compute(wine.model, x_test_s)$net.result[,1]
+
+quality_min <- y_pp$ranges[1, "quality"]
+quality_max <- y_pp$ranges[2, "quality"]
+pred <- (quality_max - quality_min) * pred_scaled + quality_min
+
+actual <- y_test$quality
+mse <- mean((actual - pred)^2)
+rmse <- sqrt(mse)
+mae <- mean(abs(actual - pred))
+correlation <- cor(actual, pred)
+
+data.frame(MSE=mse, RMSE=rmse, MAE=mae, Correlation=correlation)
+```
+
+## Interpretation
+Performance should be judged on the held-out test observations. Correlation describes association between predicted and actual values but should not replace error metrics such as RMSE or MAE.
